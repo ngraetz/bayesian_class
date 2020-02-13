@@ -1,0 +1,549 @@
+---
+title: "Bayesian Homework 1"
+author: "Penn ID: ngraetz"
+date: "January 31, 2019"
+output: pdf_document
+---
+  
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Load knitr package and settings
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(formatR)
+library(mvtnorm)
+options(scipen=999)
+```
+
+# **Chapter 1, Question 1a**
+
+$$P(y)=P(y|\theta=1)P(\theta=1)+P(y|\theta=2)P(\theta=2)$$
+$$=N(1,\sigma^2)(0.5)+N(2,\sigma^2)(0.5)$$
+$$=N(1,4)(0.5)+N(2,4)(0.5)$$
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+dens <- data.table(y=seq(-10,10,0.1),
+                   dens=dnorm(seq(-10,10,0.1),1,2)*.5 + 
+                        dnorm(seq(-10,10,0.1),2,2)*.5)
+ggplot(dens) + 
+  geom_line(aes(x=y,
+                y=dens)) + 
+  labs(x='y',y='Density') + 
+  theme_bw()
+```
+
+# **Chapter 1, Question 1b**
+
+$$P(\theta=1|y=1)=\frac{P(\theta=1, y=1)}{P(\theta=1, y=1)P(\theta=2, y=1)}$$
+$$=\frac{P(\theta=1)P(y=1|\theta=1)}{P(\theta=1)P(y=1|\theta=1)+P(\theta=2)P(y=1|\theta=2)}$$
+$$=\frac{P(\theta=1)P(y=1|\theta=1)}{P(\theta=1)P(y=1|\theta=1)+P(\theta=2)P(y=1|\theta=2)}$$
+$$=\frac{(0.5)N(1|1,4)}{(0.5)N(1|2,4)+(0.5)N(1|2,4)}$$
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+round((0.5*dnorm(1,1,2))/((0.5*dnorm(1,1,2))+(0.5*dnorm(1,2,2))),2)
+```
+
+$$=0.53$$
+
+# **Chapter 1, Question 1c**
+The posterior density for $\theta$, $P(\theta|y)=P(y|\theta)P(\theta)$, approaches the prior $P(\theta)$ as $\sigma \rightarrow \infty$ (the variation in the data gets larger, i.e. the data provide no useful information). Conversely, as $\theta \rightarrow 0$, the posterior density for $\theta$ becomes completely concentrated at 1.
+
+# **Chapter 1, Question 9**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+simulate_queue <- function(i) {
+  ## Figure out the time at which each 
+  ## new patient walks in between 9am and 4pm
+  ## (independent draws from exponential distribution)
+  message(paste0('Running simulation: ',i))
+  patient_time_draws <- c()
+  while(sum(patient_time_draws)<420) {
+    patient_time_draws <- c(patient_time_draws, round(rexp(1, 1/10)))
+  }
+  ## Drop last person if they showed up past 4pm
+  ## (clinic closed)
+  if(sum(patient_time_draws)>420) patient_time_draws <- patient_time_draws[-length(patient_time_draws)]
+  ## Transform draws to time of day each patient arrives
+  patient_entry_times <- c(1:length(patient_time_draws))
+  for(t in 1:length(patient_time_draws)) patient_entry_times[t] <- sum(patient_time_draws[1:t])
+  ## Table for tracking results of each patient
+  total_patients <- length(patient_time_draws)
+  patients <- data.table(i=1:total_patients,
+                         arrive=rep(0,total_patients),
+                         arrive_time=patient_entry_times,
+                         wait=rep(0,total_patients),
+                         wait_time=rep(0,total_patients),
+                         appt_time=round(runif(total_patients,5,20)),
+                         seen_time=rep(0,total_patients),
+                         exit_time=rep(0,total_patients),
+                         exit=rep(0,total_patients))
+  ## Simulate the day one minute at a time
+  simulate_day <- function(patients) {
+    ## Start the day
+    clinic_open <- TRUE
+    t <- 0
+    doctors_occupied <- 0
+    patients_waiting <- c()
+    current_patients <- c()
+    while(clinic_open) {
+      t <- t + 1
+      ## START SIMULATION LOOP
+      ## Update current patients/doctors (does a patient finish?)
+      for(p in current_patients) {
+        if(t>=patients[i==p, exit_time]) {
+          current_patients <- current_patients[current_patients!=p]
+          patients[i==p, exit := 1]
+          doctors_occupied <- doctors_occupied-1
+        }
+      }
+      ## Check if any patients arrive
+      next_patients <- patients[arrive==0 & arrive_time<=t, ]
+      if(dim(next_patients)[1]!=0) {
+        ## Record that they arrived 
+        next_patients <- next_patients[, i]
+        patients[i %in% next_patients, arrive := 1]
+        ## Add them to the waiting queue
+        patients_waiting <- c(patients_waiting, next_patients)
+      }
+      ## See if any new/waiting patients can be seen (doctors occupied < 3)
+      while(doctors_occupied<3 & length(patients_waiting)!=0) {
+        ## Get the next patient waiting
+        p <- patients_waiting[1]
+        ## Update that patient's seen time and calculate wait time, exit time
+        patients[i==p, seen_time := t]
+        patients[i==p, wait_time := seen_time - arrive_time]
+        patients[i==p, exit_time := t + appt_time]
+        ## This patient is no longer waiting and is now current
+        patients_waiting <- patients_waiting[patients_waiting!=p]
+        current_patients <- c(current_patients,p)
+        ## This doctor is occupied
+        doctors_occupied <- doctors_occupied + 1
+      }
+      ## Check if clinic closes (all patients seen)
+      if(sum(patients[, exit])==length(patients[, exit])) clinic_open <- FALSE
+      ## END SIMULATION LOOP
+    }
+    ## Return table of patient results for this simulation
+    return(list(patients,t))
+  }
+  ## Simulate the day for these patients
+  patients <- simulate_day(patients)
+  ## Return all results for this simulation
+  closing_time <- patients[[2]]
+  patients <- patients[[1]]
+  patients[wait_time!=0, wait := 1]
+  results <- data.table(total_patients=dim(patients)[1],
+                        patients_waiting=patients[wait==1, length(wait)],
+                        total_wait_time=patients[, sum(wait_time)],
+                        time_waiting_per_patient=patients[,mean(wait_time)],
+                        time_waiting_per_waiting_patient=patients[wait==1,mean(wait_time)],
+                        closing_time=ifelse(closing_time>420,closing_time,420))
+  results[, sim := i]
+  return(results)
+}
+## Calculate 100 simulations 
+# sims <- rbindlist(lapply(1:100,simulate_queue))
+# saveRDS(sims, 'C:/Users/ngraetz/Documents/repos/bayesian_class/chap1prob9_sims100.RDS')
+## Read in pre-calculated simulation results so I don't
+## have to run this every time I render my markdown doc.
+sims <- readRDS('C:/Users/ngraetz/Documents/repos/bayesian_class/chap1prob9_sims100.RDS')
+single_sim <- melt(sims[1])
+single_sim[, value := round(value,2)]
+kable(single_sim)
+## Summarize necessary results
+sims <- melt(sims, id.vars = 'sim')
+sims_agg <- sims[!is.nan(value), list(lower=round(quantile(value,0.025),2),
+                                      median=round(median(value),2),
+                                      upper=round(quantile(value,0.975),2)), by='variable'] 
+kable(sims_agg)
+```
+
+Upper and lower indicate the 95% predictive intervals for each measure based on 100 simulations.
+
+# **Chapter 2, Question 5a**
+
+\begin{align}
+P(y=k)&=\int_0^1P(y=k|\theta)d\theta \\
+&=\int_0^1{n \choose k}\theta^k(1-\theta)^{n-k}d\theta \\
+&={n \choose k}\frac{\Gamma(k+1)\Gamma(n-k+1)}{\Gamma(n+2)} \\
+&=\frac{1}{n+1}
+\end{align}
+
+# **Chapter 2, Question 5b**
+
+# **Chapter 2, Question 5c**
+
+Using a uniform distribution for $\theta$ ($\alpha=\beta=1$), the prior variance is $\frac{\alpha\beta}{(\alpha+\beta)^2(\alpha+\beta+1)}=\frac{1}{12}$. The posterior variance for $Beta(\alpha+y,\beta+n-y)$ is given below.
+
+$$var(p(\theta|y))=\frac{(\alpha+y)(\beta+n-y)}{(\alpha+\beta+n)^2(\alpha+\beta+n+1)}$$
+
+$$var(p(\theta|y))=\frac{(1+y)(1+n-y)}{(2+n)^2(3+n)}$$
+$$=\left(\frac{1+y}{2+n}\right)\left(\frac{1+n-y}{2+n}\right)\left(\frac{1}{3+n}\right)$$
+
+Because the first two terms sum to 1, their product is at most $0.5*0.5=0.25$. Because $n \geq 1$, the last term must be less than or equal to $\frac{1}{4}$. So the maximum of the posterior variance is $\frac{1}{16}$, which is less than $\frac{1}{12}$.
+
+# **Chapter 2, Question 5d**
+
+If $y=1$, $n=1$, and the prior distribution of $\theta$ is $Beta(\alpha=1,\beta=5)$, then the prior variance is $\frac{1*5}{(1+5)^2(1+5+1)}=0.0198$. The posterior density is $Beta(y+1,n-y+1)$, so the posterior variance is:
+
+$$var(p(\theta|y))=\frac{(\alpha+y)(\beta+n-y)}{(\alpha+\beta+n)^2(\alpha+\beta+n+1)}$$
+
+$$=0.0255$$
+
+The posterior variance is greater than the prior variance. 
+
+# **Chapter 2, Question 8a**
+
+# **Chapter 2, Question 8b**
+
+# **Chapter 2, Question 8c**
+
+# **Chapter 2, Question 8d**
+
+# **Chapter 2, Question 9a**
+
+$$\alpha+\beta=\frac{E(\theta)(1-E(\theta))}{var(\theta)}-1=1.67$$
+$$\alpha=(\alpha+\beta)(E(\theta))=1$$
+$$\beta=(\alpha+\beta)(1-E(\theta))=0.67$$
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+theta <- seq(0,1,.001)
+plot_d <- data.table(theta=theta,
+                     dens=dbeta(theta,1,.67))
+ggplot(plot_d) + 
+  geom_line(aes(x=theta,
+                y=dens)) + 
+  theme_bw()
+```
+
+# **Chapter 2, Question 9b**
+
+If $n=1000$ and $y=650$, then the posterior $P(\theta|y)=Beta(\alpha+650,\beta+350)=Beta(651,350.67)$. The mean and standard deviation of this posterior distribution are $E(\theta|y)=65$ and $sd(\theta|y)=0.015$.
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+theta <- seq(0,1,.001)
+plot_d <- data.table(theta=theta,
+                     dens=dbeta(theta,651,350.67))
+ggplot(plot_d) + 
+  geom_line(aes(x=theta,
+                y=dens)) +
+  xlim(c(0.6,0.7)) + 
+  theme_bw()
+```
+
+# **Chapter 2, Question 9c**
+
+
+# **Chapter 2, Question 11a**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## Chapter 2, Question 11a
+calc_post_theta <- function(t,y) {
+  ## Likelihood times prior of Cauchy with known scale 1
+  ## and this draw of theta hyperprior
+  prod(dcauchy(y, t, 1))
+}
+## Load data
+y <- c(43,44,45,46.5,47.5)
+## Here we take draws of the hyperprior for theta, Uniform[0,100]
+theta_prior <- seq(0,100,0.001)
+## Use draws of theta hyperprior to get draws of theta posterior
+theta_post_unnorm <- sapply(theta_prior, calc_post_theta, y)
+## Normalize theta posterior draws
+theta_post_norm <- theta_post_unnorm/(0.001*sum(theta_post_unnorm))
+theta_post_plot <- data.table(theta=theta_prior,
+                              theta_post=theta_post_norm)
+ggplot(data=theta_post_plot) + 
+  geom_line(aes(x=theta,
+                y=theta_post)) +
+  ylim(c(0,0.5)) + 
+  labs(x='Theta',y='Theta posterior normalized density') + 
+  theme_bw()
+```
+
+# **Chapter 2, Question 11b**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+theta_post_draws <- sample(theta_prior,1000,prob=theta_post_norm,replace=T)
+ggplot(data.table(theta_posterior=theta_post_draws)) +
+  geom_histogram(aes(x=theta_posterior),
+                 color='black',fill='blue',alpha=0.5) + 
+  theme_bw()
+```
+
+# **Chapter 2, Question 11c**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+y_post_draws <- rcauchy(1000, theta_post_draws, 1)
+ggplot(data.table(y_posterior=y_post_draws)) +
+  geom_histogram(aes(x=y_posterior),
+                 color='black',fill='blue',alpha=0.5) + 
+  xlim(c(0,100)) + ## To avoid crazy long tails on Cauchy distribution
+  theme_bw()
+```
+
+# **Chapter 2, Question 13a**
+
+Assume the number of fatal accidents each year, $y$, are independent with a Poisson distribution. The model for the data is:
+
+$$y_i|\theta~Poisson(\theta)$$
+
+Using the conjugate family of distribution, we can say the prior distribution for $\theta$ follows a Gamma distribution with hyperparameters $\alpha$ and $\beta$. This means that the posterior distribution for $\theta$ is:
+
+$$P(\theta | \mathbf{y}) \sim Gamma(\sum_{i} y_i + \alpha,n+\beta)$$
+
+I simulate 1000 draws from this posterior distribution. I then used each draw of my posterior distribution for $\theta$ to draw from a Poisson distribution to calculate my predictive posterior distribution for $y^*$. I tested the set of hyperpriors that defined the non-informative prior distribution for $\theta$ as well as a wider prior. 
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## Load planes data
+d <- as.data.table(read.delim('C:/Users/ngraetz/Downloads/planes.txt'))
+## Set up posterior distribution as iid Poisson likelihood * the non-informative prior distribution for lambda,
+## which is Gamma(0.5, 0). Have to use a tiny number instead of 0 to draw from Gamma in R, as 0 is improper anyway.
+sumfatal <- d[, sum(fatal)]
+n <- d[, length(fatal)]
+draw_fatal_posterior <- function(draws, alpha_hyperprior, beta_hyperprior) {
+  ## Draw from theta posterior, theta ~ Gamma(sum(y)+alpha_hyperprior,n+beta_hyperprior)
+  theta_posterior_draw <- rgamma(draws,shape=sumfatal+alpha_hyperprior, rate=n+beta_hyperprior)
+  ## Draw from fatal posterior, y ~ Poisson(theta)
+  fatal_posterior_draw <- rpois(draws,theta_posterior_draw)
+  ## Label with hyperprior values
+  fatal_posterior_draw <- data.table(fatal_posterior=fatal_posterior_draw)
+  fatal_posterior_draw[, Prior := paste0('Alpha=',alpha_hyperprior,', Beta=',beta_hyperprior)]
+  return(fatal_posterior_draw)
+}
+## Try a couple sets of hyperpriors (the first defines the non-informative prior for theta)
+post1 <- draw_fatal_posterior(10000,1/2,0.0001)
+post2 <- draw_fatal_posterior(10000,200,10)
+fatal_posterior <- rbind(post1,post2)
+## Plot 95% credible intervals (plot using density smoother, just because it's easier to look at than histograms)
+ggplot(fatal_posterior) +
+  geom_density(aes(x=fatal_posterior,
+               fill=Prior),
+           alpha=0.7,bw=1) + 
+  theme_minimal()
+```
+
+The 95% credible interval for $y^*$ given the non-informative prior is `r round(quantile(post1[,fatal_posterior],0.025))` to `r round(quantile(post1[,fatal_posterior],0.975))` fatal accidents.
+
+# **Chapter 2, Question 16a**
+
+$$p(y)=\int p(y|\theta)p(\theta)d\theta$$
+We know that $y$ is binomially distributed given unknown $\theta$, and the prior for $\theta$ is $Beta(\alpha,\beta)$. We can integrate this over the domain of $\theta$, 0 to 1, to calculate the marginal distribution of $y$ (unconditional on $\theta$). 
+
+$$=\int_0^1{n \choose y}\theta^y(1-\theta)^{n-y}\frac{\Gamma(\alpha+\beta)}{\Gamma(\alpha)\Gamma(\beta)}\theta^{\alpha-1}(1-\theta)^{\beta-1}d\theta$$
+
+Pull out terms not conditional on $\theta$.
+
+$$=\frac{\Gamma(n+1)}{\Gamma(y+1)\Gamma(n-y+1)}\frac{\Gamma(\alpha+\beta)}{\Gamma(\alpha)\Gamma(\theta)}\int_0^1\theta^{y+\alpha-1}(1-\theta)^{n-y+\beta-1}d\theta$$
+$$=\frac{\Gamma(n+1)}{\Gamma(y+1)\Gamma(n-y+1)}\frac{\Gamma(\alpha+\beta)}{\Gamma(\alpha)\Gamma(\theta)}\frac{\Gamma(y+\alpha)\Gamma(n-y+\beta}{\Gamma(n+\alpha+\beta)}$$
+
+$p(y)$ is the beta-binomial density.
+
+# **Chapter 2, Question 16b**
+
+Only looking at the terms in $p(y)$ that depend on $y$:
+
+$$\frac{\Gamma(\alpha+y)\Gamma(\beta+n-y)}{\Gamma(y+1)\Gamma(n-y+1)}$$
+
+If $\alpha=\beta=1$, then this expression evaluates to 1.
+
+$$\frac{\Gamma(1+y)\Gamma(1+n-y)}{\Gamma(y+1)\Gamma(n-y+1)}$$
+
+Therefore if $\alpha=\beta=1$, then $p(y)$ is constant across $y$.
+
+# **Chapter 3, Question 3a**
+
+The data are distributed:
+
+$$p(y|\mu_c,\mu_t,\sigma_c,\sigma_t)=\prod_{i=1}^{32}N(y_{c,i}|\mu_c,\sigma_c^2) * \prod_{i=1}^{36}N(y_{t,i}|\mu_t,\sigma_t^2)$$
+
+So the posterior distribution is:
+
+$$p(\mu_c,\mu_t,log(\sigma_c),log(\sigma_t) | y) = p(\mu_c,\mu_t,log(\sigma_c),log(\sigma_t))p(y|\mu_c,\mu_t,log(\sigma_c),log(\sigma_t))$$
+$$=p(\mu_c,\text{log} \sigma_c|y)p(\mu_c,\text{log} \sigma_c|y))$$
+
+Considering $(\mu_c,\sigma_c)$ and $(\mu_t,\sigma_t)$ independently, we have the marignal posterior densities for $\mu_c$ and $\mu_t$:
+
+$$\mu_c|y \sim t_{31}(\mu_c,\frac{\sigma_c^2}{32})$$
+$$\mu_t|y \sim t_{35}(\mu_t,\frac{\sigma_t^2}{36})$$
+
+# **Chapter 3, Question 3b**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## Take 1000 draws from the posteriors of the treatment mean and
+## the control mean and difference to get 1000 treatement effects
+control_mean_post <- 1.013 + (0.24/sqrt(32))*rt(1000,31)
+treatment_mean_post <- 1.173 + (0.20/sqrt(36))*rt(1000,35)
+ate_post <- treatment_mean_post - control_mean_post
+ate_upper <- quantile(ate_post,0.975)
+ate_lower <- quantile(ate_post,0.025)
+ggplot(data.table(ate=ate_post)) +
+  geom_histogram(aes(x=ate),
+                 color='black',fill='blue',alpha=0.5) + 
+  geom_vline(xintercept = ate_upper, linetype='dashed') + 
+  geom_vline(xintercept = ate_lower, linetype='dashed') +
+  labs(x='Average treatment effect',y='count') +
+  theme_bw()
+```
+
+I draw from both posterior densities 1000 times to create 1000 draws of the posterior quantity $\mu_t-\mu_c$ (the treatment effect). The 95% posterior interval for the treatment effect is [`r round(ate_lower,2)`,`r round(ate_upper,2)`].
+
+# **Chapter 3, Question 12a**
+
+We could use an independent uniform distribution for $\alpha$ and $\beta$: $p(\alpha,\beta) \propto 1$. This is an improper prior because the domain of $\alpha$ is $0 \rightarrow \infty$, which will not integrate to 1 so is not a proper probability density. But we will check that our posterior is proper.
+
+# **Chapter 3, Question 12b**
+
+For an informative prior, we might want to assume that $(\alpha,\beta)$ follows a multivariate Normal distribution centered around -1 for $\alpha$ and 28 for $\beta$. There would be some negative correlation between the two terms, because in our linear model the slope will necessarily be lower if the intercept is higher. 
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+alpha_beta_inform <- as.data.table(rmvnorm(1000,c(28,-1),matrix(c(1,-.4,-.4,1),nrow=2,ncol=2)))
+ggplot(data=alpha_beta_inform) + 
+  geom_point(aes(x=V1,y=V2),alpha=0.2) + 
+  geom_density_2d(aes(x=V1,
+                   y=V2),
+                  color='red',size=1,h=3) + 
+  labs(x='alpha',y='beta') + 
+  theme_bw()
+```
+
+# **Chapter 3, Question 12c**
+
+The posterior density for $(\alpha,\beta)$ is:
+
+$$p(\alpha,\beta|\pmb{y}) \propto \prod_{t=1}^{10} (\alpha+\beta t)^{y_{t}} e^{-(\alpha+\beta t)}$$
+
+The sufficient statistics are the ordered pairs of fatal accidents and year (i.e. the entire dataset). 
+
+# **Chapter 3, Question 12d**
+
+The posterior density is proper because the product of Poissons will be a valid probability density.
+
+# **Chapter 3, Question 12e**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## Input data:  
+d <- as.data.table(read.delim('C:/Users/ngraetz/Downloads/planes.txt'))
+d[, t := year-1976]
+## 12e
+## Crude estimate of alpha/beta from linear regression
+linear_model <- lm(fatal~t,data=d)
+summary(linear_model)
+```
+
+The estimates from our linear model are $\alpha = 27.95$ and $\beta = -0.92$. These crude estimates can provide good general starting locations for our grid sampling of the joint posterior density. I use 18 to 38 for $\alpha$ and -4 to 2 for $\beta$.
+
+# **Chapter 3, Question 12g**
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## 12f
+## Function to evaluate posterior PDF for number of fatal accidents.
+posteriorplanes <- function(alpha,beta,d){
+  t <- d[, t]
+  y <- d[, fatal]
+  logpost <- -Inf
+  if (alpha + beta*max(t) > 0){
+    logpost <- 0
+    for (i in 1:length(y)){
+      logpost <- logpost + y[i]*log(alpha+beta*t[i])
+      logpost <- logpost - (alpha+beta*t[i])
+    }
+  }
+  logpost
+}
+## Set up grid to calculate posterior density at each combination of alpha/beta.
+numgrid <- 100
+alpharange <- seq(18,38,length.out=numgrid) # alpha +/- 10 from the OLS estimate
+betarange <- seq(-4,2,length.out=numgrid) # beta +/- 2 from the OLS estimate
+full <- matrix(NA,nrow=numgrid,ncol=numgrid)
+for (i in 1:numgrid){
+  for (j in 1:numgrid){
+    full[i,j] <- posteriorplanes(alpharange[i],betarange[j],d)
+  }
+}
+full <- exp(full - max(full))
+full <- full/sum(full)
+rownames(full) <- alpharange
+colnames(full) <- betarange
+## Contour plot of probabilities for joint posterior density.
+ggplot(data=melt(full)) +
+  geom_contour(aes(x=Var1,
+                   y=Var2,
+                   z=value),
+                  color='red',size=1) +
+  labs(x='alpha',y='beta') +
+  theme_bw()
+```
+
+# **Chapter 3, Question 12g**
+
+I calculate the marginal density for $\alpha$ and the corresponding conditional density for $\beta$ using the joint samples from my grid above just to compare how they co-vary.
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## 12g
+## Calculating probabilities for grid sampler:
+alphamarginal <- rep(NA,numgrid)
+for (i in 1:numgrid){
+  alphamarginal[i] <- sum(full[i,])
+}
+betaconditional <- matrix(NA,nrow=numgrid,ncol=numgrid)
+for (i in 1:numgrid){
+  for (j in 1:numgrid){
+    betaconditional[i,j] <- full[i,j]/sum(full[i,])
+  }
+}
+alpha_value <- 50
+beta_cond <- data.table(beta=betarange,
+                        alpha25_dens=betaconditional[25,],
+                        alpha50_dens=betaconditional[50,],
+                        alpha75_dens=betaconditional[75,])
+beta_cond <- melt(beta_cond,id.vars='beta')
+beta_cond[variable=='alpha25_dens', alpha := round(alpharange[25],2)]
+beta_cond[variable=='alpha50_dens', alpha := round(alpharange[50],2)]
+beta_cond[variable=='alpha75_dens', alpha := round(alpharange[75],2)]
+ggplot(data=beta_cond) +
+  geom_line(aes(y=value,
+                x=beta,
+                color=as.factor(alpha)),
+            size=1) +
+  labs(x='Beta (conditional on alpha)',y='Density',color='Alpha') +
+  theme_bw()
+## sampling grid values:
+alpha.samp <- rep(NA,10000)
+beta.samp <- rep(NA,10000)
+for (m in 1:10000){
+  a <- sample(1:100,size=1,replace=T,prob=alphamarginal)
+  b <- sample(1:100,size=1,replace=T,prob=betaconditional[a,])
+  alpha.samp[m] <- alpharange[a]
+  beta.samp[m] <- betarange[b]
+}
+```
+
+I then calculate 1000 simulations of the expected number of fatal accidents in 1986 ($\theta$ in the data Poisson) by plugging in my 1000 draws of $(\alpha,\beta)$ to: $\alpha + 1986*\beta$. This predicted posterior rate is plotted below.
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## Predicted posterior rate for 1986 (t = 10).
+post_rate <- alpha.samp + beta.samp*10
+ggplot(data=data.table(post_rate=post_rate)) + 
+  geom_histogram(aes(post_rate),
+                 fill='blue',color='blue',alpha=0.5) + 
+  labs(x='Posterior rate') + 
+  theme_bw()
+```
+
+# **Chapter 3, Question 12h**
+
+I take 1000 samples from a Poisson distribution using my 1000 draws of the posterior density for $\theta$ generated above.
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+## 12h
+## Predicted posterior accidents for 1986 (t = 10).
+post_accidents <- rpois(10000,post_rate)
+upper_accidents <- quantile(post_accidents, 0.975)
+lower_accidents <- quantile(post_accidents, 0.025)
+```
+
+The 95% predictive interval for the number of fatal accidents in 1986 is `r lower_accidents` to `r upper_accidents`.
+
+# **Chapter 3, Question 12i**
+
+My hypothetical informative prior is different than the posterior obtained under my non-informative prior. One reason is that my guess of the variance was quite far off, which does seem harder to provide robust prior information on than the mean. 

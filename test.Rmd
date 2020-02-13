@@ -1,0 +1,26 @@
+---
+title: "Bayesian Homework 1"
+author: "Penn ID: ngraetz"
+date: "January 31, 2019"
+header-includes:
+   - \usepackage{amsmath}
+output: pdf_document
+---
+  
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+# Load knitr package and settings
+library(knitr)
+library(data.table)
+library(ggplot2)
+library(formatR)
+library(mvtnorm)
+options(scipen=999)
+```
+
+# **Chapter 1, Question 1a**
+
+\begin{align}
+\frac{\alpha+y}{\alpha+\beta+n}&=\frac{y}{n}+\tau(\frac{\alpha}{\alpha+\beta}-\frac{y}{n}) \\
+\frac{\alpha+y}{\alpha+\beta+n}-\frac{y}{n}&=\tau\frac{\alpha}{\alpha+\beta}-\frac{y}{n} \\
+\frac{n \alpha-\alpha y-\beta y}{(\alpha+\beta+n)n}&=\tau\frac{n \alpha-\alpha y-\beta y}{(\alpha+\beta)n} \\
+\end{align}
